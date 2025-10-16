@@ -180,38 +180,105 @@ curl -X POST "http://localhost:8080/api/persons" ^
 
 ### Accès à Camunda Cockpit
 1. **URL :** `http://localhost:8080/camunda`
-2. **Credentials :** `demo / demo`
+2. **Credentials par défaut :** 
+   - **Username :** `demo`
+   - **Password :** `demo`
+3. **Credentials admin (si configuré) :**
+   - **Username :** `admin`
+   - **Password :** `admin`
 
 ### Démarrage manuel d'un processus
+
+#### Via l'API Custom Age Routing (RECOMMANDÉ)
 ```powershell
-# Démarrer le processus avec une personne adulte
+# Démarrer le processus avec une personne adulte via l'API custom
+$adultData = @{
+    email = "test.adult@example.com"
+    firstName = "Test"
+    lastName = "Adult"
+    birthDate = "1990-01-01"
+} | ConvertTo-Json
+
+Invoke-RestMethod -Uri "http://localhost:8080/api/process/age-routing/start" -Method POST -Body $adultData -ContentType "application/json"
+```
+
+```powershell
+# Démarrer le processus avec une personne mineure via l'API custom
+$minorData = @{
+    email = "test.minor@example.com" 
+    firstName = "Test"
+    lastName = "Minor"
+    birthDate = "2010-01-01"
+} | ConvertTo-Json
+
+Invoke-RestMethod -Uri "http://localhost:8080/api/process/age-routing/start" -Method POST -Body $minorData -ContentType "application/json"
+```
+
+#### Via l'API Camunda directe (avec types corrects)
+```powershell
+# ATTENTION: Utiliser des types Long pour les IDs numériques
 $processData = @{
     variables = @{
         firstName = @{ value = "Test"; type = "String" }
         lastName = @{ value = "Adult"; type = "String" }
         email = @{ value = "test.adult@example.com"; type = "String" }
         birthDate = @{ value = "1990-01-01"; type = "String" }
+        personId = @{ value = [long]123; type = "Long" }  # Important: type Long
     }
 } | ConvertTo-Json -Depth 3
 
 Invoke-RestMethod -Uri "http://localhost:8080/engine-rest/process-definition/key/age-based-routing-process/start" -Method POST -Body $processData -ContentType "application/json"
 ```
 
-```powershell
-# Démarrer le processus avec une personne mineure
-$processDataMinor = @{
-    variables = @{
-        firstName = @{ value = "Test"; type = "String" }
-        lastName = @{ value = "Minor"; type = "String" }
-        email = @{ value = "test.minor@example.com"; type = "String" }
-        birthDate = @{ value = "2010-01-01"; type = "String" }
-    }
-} | ConvertTo-Json -Depth 3
-
-Invoke-RestMethod -Uri "http://localhost:8080/engine-rest/process-definition/key/age-based-routing-process/start" -Method POST -Body $processDataMinor -Content-Type "application/json"
-```
-
 ## 🎯 Tests de Routage par Âge
+
+### ⚠️ Correction de l'Erreur Integer/Long Cast
+
+**Problème :** `java.lang.Integer cannot be cast to class java.lang.Long`
+
+**Solution :** Utiliser l'API custom `/api/process/age-routing/start` au lieu de l'API Camunda directe, ou spécifier explicitement les types Long.
+
+#### Tests de l'API Age Routing Process
+
+```powershell
+# Test complet de l'API Age Routing Process
+Write-Host "=== TEST API AGE ROUTING PROCESS ==="
+
+# 1. Démarrer processus adulte
+$adultRequest = @{
+    personId = 100
+    email = "test.adult.api@example.com"
+    firstName = "TestAdult"
+    lastName = "API"
+    birthDate = "1990-01-01"
+} | ConvertTo-Json
+
+$adultResponse = Invoke-RestMethod -Uri "http://localhost:8080/api/process/age-routing/start" -Method POST -Body $adultRequest -ContentType "application/json"
+Write-Host "✅ Processus adulte: $($adultResponse.processInstanceId)"
+
+# 2. Démarrer processus mineur  
+$minorRequest = @{
+    email = "test.minor.api@example.com"
+    firstName = "TestMinor" 
+    lastName = "API"
+    birthDate = "2010-01-01"
+} | ConvertTo-Json
+
+$minorResponse = Invoke-RestMethod -Uri "http://localhost:8080/api/process/age-routing/start" -Method POST -Body $minorRequest -ContentType "application/json"
+Write-Host "✅ Processus mineur: $($minorResponse.processInstanceId)"
+
+# 3. Vérifier statuts
+Start-Sleep -Seconds 1
+$adultStatus = Invoke-RestMethod -Uri "http://localhost:8080/api/process/age-routing/status/$($adultResponse.processInstanceId)" -Method GET
+$minorStatus = Invoke-RestMethod -Uri "http://localhost:8080/api/process/age-routing/status/$($minorResponse.processInstanceId)" -Method GET
+
+Write-Host "Adulte DB: $($adultStatus.variables.targetDatabase)"
+Write-Host "Mineur DB: $($minorStatus.variables.targetDatabase)"
+
+# 4. Statistiques
+$stats = Invoke-RestMethod -Uri "http://localhost:8080/api/process/age-routing/statistics" -Method GET
+Write-Host "Total processus: $($stats.statistics.total)"
+```
 
 ### Test Complet de Séparation des Données
 
@@ -316,10 +383,10 @@ WHERE DATEDIFF('YEAR', birthDate, CURRENT_DATE()) >= 18;
 
 ## 🧪 Tests d'Intégration
 
-### Script de Test Complet
+### Script de Test Complet avec Correction d'Erreurs
 ```powershell
-# Test d'intégration complète
-Write-Host "=== DEBUT DU TEST D'INTEGRATION ==="
+# Test d'intégration complète avec gestion des erreurs Integer/Long
+Write-Host "=== DEBUT DU TEST D'INTEGRATION CORRIGE ==="
 
 # 1. Vérifier que l'application répond
 try {
@@ -373,11 +440,290 @@ if ($adultIncrease -eq 1 -and $minorIncrease -eq 1) {
 Write-Host "=== FIN DU TEST D'INTEGRATION ==="
 ```
 
-## 🔧 Dépannage
+## � Configuration Utilisateur Camunda
+
+### Utilisateurs par Défaut
+Camunda utilise généralement ces comptes par défaut :
+
+#### Compte Demo (Configuration Standard)
+- **Username :** `demo`
+- **Password :** `demo`
+- **Rôles :** Utilisateur standard avec accès Cockpit
+
+#### Compte Admin (Si activé)
+- **Username :** `admin` 
+- **Password :** `admin`
+- **Rôles :** Administrateur complet
+
+### Vérification des Comptes Disponibles
+```powershell
+# Tester l'accès avec demo
+$demoAuth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("demo:demo"))
+try {
+    $result = Invoke-RestMethod -Uri "http://localhost:8080/engine-rest/user" -Method GET -Headers @{Authorization="Basic $demoAuth"}
+    Write-Host "✅ Accès demo OK - Utilisateurs disponibles:"
+    $result | ForEach-Object { Write-Host "  - $($_.id) ($($_.firstName) $($_.lastName))" }
+} catch {
+    Write-Host "❌ Erreur accès demo: $($_.Exception.Message)"
+}
+
+# Tester l'accès avec admin
+$adminAuth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("admin:admin"))
+try {
+    $adminResult = Invoke-RestMethod -Uri "http://localhost:8080/engine-rest/user" -Method GET -Headers @{Authorization="Basic $adminAuth"}
+    Write-Host "✅ Accès admin OK"
+} catch {
+    Write-Host "❌ Compte admin non configuré ou incorrect"
+}
+```
+
+### Créer un Utilisateur Admin via API REST
+```powershell
+# Créer un nouvel utilisateur admin
+$newAdminUser = @{
+    profile = @{
+        id = "admin"
+        firstName = "Admin"
+        lastName = "User"
+        email = "admin@example.com"
+    }
+    credentials = @{
+        password = "admin123"
+    }
+} | ConvertTo-Json -Depth 3
+
+# Utiliser les credentials demo pour créer l'admin
+$demoAuth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("demo:demo"))
+try {
+    Invoke-RestMethod -Uri "http://localhost:8080/engine-rest/user/create" -Method POST -Body $newAdminUser -ContentType "application/json" -Headers @{Authorization="Basic $demoAuth"}
+    Write-Host "✅ Utilisateur admin créé avec succès"
+    Write-Host "   Username: admin"
+    Write-Host "   Password: admin123"
+} catch {
+    Write-Host "❌ Erreur création admin: $($_.Exception.Message)"
+}
+```
+
+### Lister Tous les Utilisateurs
+```powershell
+# Via API REST
+$auth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("demo:demo"))
+$users = Invoke-RestMethod -Uri "http://localhost:8080/engine-rest/user" -Method GET -Headers @{Authorization="Basic $auth"}
+
+Write-Host "=== UTILISATEURS CAMUNDA ==="
+$users | ForEach-Object {
+    Write-Host "ID: $($_.id)"
+    Write-Host "Nom: $($_.firstName) $($_.lastName)"
+    Write-Host "Email: $($_.email)"
+    Write-Host "---"
+}
+```
+
+### Accès Direct aux Interfaces Camunda
+```powershell
+Write-Host "=== ACCÈS INTERFACES CAMUNDA ==="
+Write-Host "Cockpit (Monitoring): http://localhost:8080/camunda/app/cockpit/"
+Write-Host "Tasklist (Tâches): http://localhost:8080/camunda/app/tasklist/"
+Write-Host "Admin (Administration): http://localhost:8080/camunda/app/admin/"
+Write-Host ""
+Write-Host "Credentials à essayer:"
+Write-Host "1. demo / demo"
+Write-Host "2. admin / admin"
+Write-Host "3. admin / admin123 (si créé via script ci-dessus)"
+```
+
+## �🔧 Dépannage
 
 ### Problèmes Courants
 
-#### 1. Application ne démarre pas
+#### 1. Erreur "Integer cannot be cast to Long"
+**Problème :** `java.lang.Integer cannot be cast to class java.lang.Long`
+**Cause :** Mauvais typage des variables dans les processus BPMN
+**Solutions :**
+```powershell
+# ✅ CORRECT - Utiliser l'API custom
+$correctRequest = @{
+    email = "test@example.com"
+    firstName = "Test"
+    lastName = "User" 
+    birthDate = "1990-01-01"
+} | ConvertTo-Json
+
+Invoke-RestMethod -Uri "http://localhost:8080/api/process/age-routing/start" -Method POST -Body $correctRequest -ContentType "application/json"
+
+# ❌ INCORRECT - API Camunda avec mauvais types
+# Ne pas utiliser personId comme Integer dans l'API Camunda directe
+
+# ✅ CORRECT - Si vous devez utiliser l'API Camunda directe
+$camundaRequest = @{
+    variables = @{
+        email = @{ value = "test@example.com"; type = "String" }
+        firstName = @{ value = "Test"; type = "String" }
+        lastName = @{ value = "User"; type = "String" }
+        birthDate = @{ value = "1990-01-01"; type = "String" }
+        # Éviter personId ou utiliser type Long explicitement
+    }
+} | ConvertTo-Json -Depth 3
+```
+
+#### 2. Erreur dans AgeRoutingProcessController
+**Problème :** `Error starting age-based routing process` dans les logs
+**Cause :** Erreur dans le contrôleur lors du démarrage du processus BPMN
+**Solutions de diagnostic :**
+```powershell
+# 🔍 DIAGNOSTIC AVANCÉ POUR ERREUR AGERROUTINGPROCESSCONTROLLER
+
+Write-Host "=== DIAGNOSTIC ERREUR AGE ROUTING CONTROLLER ==="
+
+# 1. Tester d'abord le service de base (sans processus BPMN)
+Write-Host "`n1. Test du service de base sans BPMN..."
+$directTest = @{
+    firstName = "Marie"
+    lastName = "Dubois"
+    email = "marie.dubois.direct@example.com"
+    birthDate = "1985-12-01"
+} | ConvertTo-Json
+
+try {
+    $directResult = Invoke-RestMethod -Uri "http://localhost:8080/api/persons" -Method POST -Body $directTest -ContentType "application/json" -Verbose
+    Write-Host "✅ Service de base fonctionne - ID: $($directResult.id)"
+    Write-Host "   Database: $($directResult.targetDatabase)"
+    $baseServiceOK = $true
+} catch {
+    Write-Host "❌ ERREUR SERVICE DE BASE: $($_.Exception.Message)"
+    Write-Host "   → Le problème est dans AgeBasedPersonService, pas dans BPMN"
+    $baseServiceOK = $false
+}
+
+# 2. Si le service de base fonctionne, tester le processus BPMN avec les mêmes données
+if ($baseServiceOK) {
+    Write-Host "`n2. Test du processus BPMN avec données identiques..."
+    
+    # Test avec les MÊMES données que celles qui ont échoué
+    $problematicData = @{
+        email = "marie.dubois.bpmn@example.com"  # Email légèrement différent pour éviter les doublons
+        firstName = "Marie"
+        lastName = "Dubois"
+        birthDate = "1985-12-01"
+    } | ConvertTo-Json
+    
+    try {
+        Write-Host "Envoi de la requête BPMN..."
+        $bpmnResult = Invoke-RestMethod -Uri "http://localhost:8080/api/process/age-routing/start" -Method POST -Body $problematicData -ContentType "application/json" -Verbose
+        Write-Host "✅ Processus BPMN réussi - ID: $($bpmnResult.processInstanceId)"
+        Write-Host "   Variables: $($bpmnResult.variables | ConvertTo-Json -Compress)"
+    } catch {
+        Write-Host "❌ ERREUR PROCESSUS BPMN: $($_.Exception.Message)"
+        
+        # Analyser la réponse d'erreur complète
+        if ($_.Exception.Response) {
+            $errorResponse = $_.Exception.Response.GetResponseStream()
+            $reader = New-Object System.IO.StreamReader($errorResponse)
+            $errorBody = $reader.ReadToEnd()
+            Write-Host "   Détails erreur: $errorBody"
+        }
+    }
+}
+
+# 3. Vérifier les définitions de processus BPMN
+Write-Host "`n3. Vérification des processus BPMN..."
+try {
+    $processes = Invoke-RestMethod -Uri "http://localhost:8080/engine-rest/process-definition" -Method GET
+    $ageRoutingProcess = $processes | Where-Object { $_.key -eq "age-based-routing-process" }
+    
+    if ($ageRoutingProcess) {
+        Write-Host "✅ Processus age-based-routing-process trouvé:"
+        Write-Host "   ID: $($ageRoutingProcess.id)"
+        Write-Host "   Version: $($ageRoutingProcess.version)"
+        Write-Host "   Deployed: $($ageRoutingProcess.deploymentId)"
+    } else {
+        Write-Host "❌ Processus age-based-routing-process NON TROUVÉ"
+        Write-Host "   Processus disponibles:"
+        $processes | ForEach-Object { Write-Host "   - $($_.key)" }
+    }
+} catch {
+    Write-Host "❌ Erreur accès engine REST: $($_.Exception.Message)"
+}
+
+# 4. Test avec données simplifiées pour isoler le problème
+Write-Host "`n4. Test avec données minimales..."
+$minimalTest = @{
+    email = "minimal.test@example.com"
+    firstName = "Test"
+    lastName = "Minimal"
+    birthDate = "1990-01-01"
+} | ConvertTo-Json
+
+try {
+    $minimalResult = Invoke-RestMethod -Uri "http://localhost:8080/api/process/age-routing/start" -Method POST -Body $minimalTest -ContentType "application/json"
+    Write-Host "✅ Test minimal réussi - Le problème n'est pas dans les données"
+} catch {
+    Write-Host "❌ Test minimal échoué - Problème général dans le contrôleur"
+    Write-Host "   Erreur: $($_.Exception.Message)"
+}
+```
+
+**Diagnostic avancé pour votre erreur spécifique :**
+
+```powershell
+# 🚨 REPRODUCTION DE VOTRE ERREUR EXACTE
+Write-Host "=== REPRODUCTION ERREUR MARIE DUBOIS ==="
+
+# Reproduire exactement votre requête qui a échoué
+$exactFailedRequest = @{
+    email = "marie.dubos@example.com"
+    firstName = "Mari" 
+    lastName = "Duois"
+    birthDate = "1985-12-01"
+} | ConvertTo-Json
+
+Write-Host "Reproduction de la requête qui a échoué..."
+Write-Host "Data: $exactFailedRequest"
+
+try {
+    $result = Invoke-RestMethod -Uri "http://localhost:8080/api/process/age-routing/start" -Method POST -Body $exactFailedRequest -ContentType "application/json" -Verbose
+    Write-Host "✅ Requête réussie maintenant - Problème résolu?"
+    Write-Host "Process ID: $($result.processInstanceId)"
+} catch {
+    Write-Host "❌ Erreur reproduite:"
+    Write-Host "   Message: $($_.Exception.Message)"
+    Write-Host "   Status: $($_.Exception.Response.StatusCode)"
+    
+    # Capturer la réponse complète d'erreur
+    if ($_.Exception.Response) {
+        $stream = $_.Exception.Response.GetResponseStream()
+        $reader = New-Object System.IO.StreamReader($stream)
+        $responseBody = $reader.ReadToEnd()
+        Write-Host "   Body: $responseBody"
+    }
+}
+
+# Test de comparaison avec des données similaires mais correctes
+Write-Host "`nTest de comparaison avec données corrigées..."
+$correctedRequest = @{
+    email = "marie.dubois.corrected@example.com"  # Email corrigé
+    firstName = "Marie"  # Nom corrigé
+    lastName = "Dubois"  # Nom de famille corrigé  
+    birthDate = "1985-12-01"  # Date identique
+} | ConvertTo-Json
+
+try {
+    $correctedResult = Invoke-RestMethod -Uri "http://localhost:8080/api/process/age-routing/start" -Method POST -Body $correctedRequest -ContentType "application/json"
+    Write-Host "✅ Données corrigées fonctionnent - Process ID: $($correctedResult.processInstanceId)"
+    Write-Host "   → Le problème pourrait être lié aux caractères ou à la validation des données"
+} catch {
+    Write-Host "❌ Même erreur avec données corrigées - Problème système"
+}
+```
+
+**Actions recommandées :**
+1. **Vérifier les logs complets** dans la console Spring Boot pour voir l'exception complète
+2. **Tester le service de base** d'abord : `POST /api/persons` avec les mêmes données
+3. **Vérifier si le processus BPMN est correctement déployé**
+4. **S'assurer que tous les beans Spring sont correctement injectés** (`AgeBasedRoutingDelegate`, `PersonProcessingDelegate`, `AgeBasedPersonService`)
+5. **Redémarrer l'application** si les beans ne sont pas injectés
+
+#### 2. Application ne démarre pas
 ```powershell
 # Vérifier les ports utilisés
 netstat -an | findstr :8080
@@ -410,16 +756,140 @@ FROM PERSON;
 - Vérifier que les beans Spring sont correctement injectés
 
 ### Commandes de Diagnostic
+
+#### Diagnostic pour "execution doesn't exist"
 ```powershell
-# Voir les logs en temps réel
-mvn spring-boot:run | Tee-Object -FilePath "application.log"
+# 1. Vérifier les définitions de processus déployées
+$processes = Invoke-RestMethod -Uri "http://localhost:8080/engine-rest/process-definition" -Method GET
+Write-Host "Processus déployés:"
+$processes | ForEach-Object { Write-Host "- $($_.key) (version $($_.version))" }
+
+# 2. Vérifier les instances actives
+$activeInstances = Invoke-RestMethod -Uri "http://localhost:8080/engine-rest/process-instance" -Method GET
+Write-Host "Instances actives: $($activeInstances.Count)"
+
+# 3. Tester les services de base AVANT les processus BPMN
+Write-Host "`n=== TEST DES SERVICES DE BASE ==="
+
+# Test du service AgeBasedPersonService via API REST
+$baseServiceTest = @{
+    firstName = "ServiceTest"
+    lastName = "Base"
+    email = "service.test@example.com"
+    birthDate = "1990-01-01"
+} | ConvertTo-Json
+
+try {
+    $serviceResult = Invoke-RestMethod -Uri "http://localhost:8080/api/persons" -Method POST -Body $baseServiceTest -ContentType "application/json"
+    Write-Host "✅ Service de base OK - Person ID: $($serviceResult.id)"
+    
+    # Vérifier dans quelle base elle a été stockée
+    $adults = Invoke-RestMethod -Uri "http://localhost:8080/api/persons/adults" -Method GET
+    $minors = Invoke-RestMethod -Uri "http://localhost:8080/api/persons/minors" -Method GET
+    Write-Host "✅ Routage par âge OK - Adultes: $($adults.Count), Mineurs: $($minors.Count)"
+    
+} catch {
+    Write-Host "❌ PROBLÈME SERVICE DE BASE: $($_.Exception.Message)"
+    Write-Host "   → Le problème est dans AgeBasedPersonService, pas dans BPMN"
+}
+
+# 4. Si le service de base fonctionne, tester le processus BPMN
+Write-Host "`n=== TEST PROCESSUS BPMN (si service de base OK) ==="
+if ($serviceResult) {
+    $bpmnTest = @{
+        email = "bpmn.test@example.com"
+        firstName = "BPMN"
+        lastName = "Test" 
+        birthDate = "1990-01-01"
+    } | ConvertTo-Json
+    
+    try {
+        $bpmnResult = Invoke-RestMethod -Uri "http://localhost:8080/api/process/age-routing/start" -Method POST -Body $bpmnTest -ContentType "application/json"
+        Write-Host "✅ Processus BPMN OK - ID: $($bpmnResult.processInstanceId)"
+    } catch {
+        Write-Host "❌ PROBLÈME PROCESSUS BPMN: $($_.Exception.Message)"
+        Write-Host "   → Vérifier les délégués dans le processus BPMN"
+    }
+}
+```
+
+#### Logs et Monitoring
+```powershell
+# Voir les logs en temps réel avec filtrage
+mvn spring-boot:run | Tee-Object -FilePath "application.log" | Select-String -Pattern "ERROR|Exception|age-based|AgeBasedRoutingDelegate"
 
 # Vérifier les processus Java en cours
 Get-Process -Name "java" -ErrorAction SilentlyContinue
 
-# Nettoyer et redémarrer
+# Nettoyer et redémarrer avec logs détaillés
 mvn clean
+$env:LOGGING_LEVEL_COM_EXAMPLE_CAMUNDA = "DEBUG"
 mvn spring-boot:run
+```
+
+#### Script de Diagnostic Complet
+```powershell
+Write-Host "=== DIAGNOSTIC COMPLET ERREUR EXECUTION ==="
+
+# Étape 1: Santé application
+try {
+    $health = Invoke-RestMethod -Uri "http://localhost:8080/actuator/health" -Method GET
+    Write-Host "✅ Application: $($health.status)"
+} catch {
+    Write-Host "❌ Application inaccessible"
+    exit 1
+}
+
+# Étape 2: Test service minimal (sans BPMN)
+Write-Host "`nÉtape 2: Test service de base..."
+$minimalPerson = @{
+    firstName = "Diagnostic"
+    lastName = "Test"
+    email = "diagnostic.$(Get-Date -Format 'HHmmss')@example.com"
+    birthDate = "1990-01-01"
+} | ConvertTo-Json
+
+try {
+    $personResult = Invoke-RestMethod -Uri "http://localhost:8080/api/persons" -Method POST -Body $minimalPerson -ContentType "application/json"
+    Write-Host "✅ Service de base fonctionne - ID: $($personResult.id)"
+    $baseServiceOK = $true
+} catch {
+    Write-Host "❌ Service de base défaillant: $($_.Exception.Message)"
+    $baseServiceOK = $false
+}
+
+# Étape 3: Test processus BPMN seulement si service de base OK
+if ($baseServiceOK) {
+    Write-Host "`nÉtape 3: Test processus BPMN..."
+    $processTest = @{
+        email = "process.$(Get-Date -Format 'HHmmss')@example.com"
+        firstName = "Process"
+        lastName = "Test"
+        birthDate = "1990-01-01"
+    } | ConvertTo-Json
+    
+    try {
+        $processResult = Invoke-RestMethod -Uri "http://localhost:8080/api/process/age-routing/start" -Method POST -Body $processTest -ContentType "application/json"
+        Write-Host "✅ Processus BPMN fonctionne - ID: $($processResult.processInstanceId)"
+    } catch {
+        Write-Host "❌ Processus BPMN défaillant: $($_.Exception.Message)"
+        Write-Host "   → Problème dans les délégués BPMN"
+        Write-Host "   → Vérifier AgeBasedRoutingDelegate dans les logs"
+    }
+} else {
+    Write-Host "❌ Impossible de tester BPMN car le service de base ne fonctionne pas"
+}
+
+Write-Host "`n=== RECOMMANDATIONS ==="
+if (-not $baseServiceOK) {
+    Write-Host "1. Vérifier AgeBasedPersonService et la configuration des DataSources"
+    Write-Host "2. Vérifier les connexions H2 (main_db et minors_db)"
+    Write-Host "3. Regarder les logs Spring Boot pour les erreurs de bean injection"
+} else {
+    Write-Host "1. Le service de base fonctionne, le problème est dans le processus BPMN"
+    Write-Host "2. Vérifier AgeBasedRoutingDelegate et PersonProcessingDelegate"
+    Write-Host "3. Vérifier que les beans sont correctement injectés dans les délégués"
+}
 ```
 
 ## 📈 Tests de Performance

@@ -2,6 +2,7 @@ package com.example.camunda.controller;
 
 import org.camunda.bpm.engine.ProcessEngine;
 import org.camunda.bpm.engine.history.HistoricProcessInstance;
+import org.camunda.bpm.engine.history.HistoricVariableInstance;
 import org.camunda.bpm.engine.runtime.ProcessInstance;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,9 +52,15 @@ public class AgeRoutingProcessController {
             
             logger.info("Age-based routing process started with id: {}", processInstance.getId());
             
-            // Récupérer les variables du processus après exécution
-            Map<String, Object> processVariables = processEngine.getRuntimeService()
-                    .getVariables(processInstance.getId());
+            // Récupérer les variables du processus depuis l'historique (car le processus peut être terminé)
+            Map<String, Object> processVariables = new HashMap<>();
+            processEngine.getHistoryService()
+                    .createHistoricVariableInstanceQuery()
+                    .processInstanceId(processInstance.getId())
+                    .list()
+                    .forEach(variable -> {
+                        processVariables.put(variable.getName(), variable.getValue());
+                    });
             
             Map<String, Object> response = new HashMap<>();
             response.put("success", true);
@@ -110,15 +117,16 @@ public class AgeRoutingProcessController {
                         .singleResult();
                 
                 if (historicProcess != null) {
-                    Map<String, Object> variables = processEngine.getHistoryService()
+                    List<HistoricVariableInstance> historicVariables = processEngine.getHistoryService()
                             .createHistoricVariableInstanceQuery()
                             .processInstanceId(processInstanceId)
-                            .list()
-                            .stream()
-                            .collect(Collectors.toMap(
-                                var -> var.getName(),
-                                var -> var.getValue()
-                            ));
+                            .list();
+                    
+                    // Utiliser forEach pour gérer les valeurs null
+                    Map<String, Object> variables = new HashMap<>();
+                    historicVariables.forEach(var -> 
+                        variables.put(var.getName(), var.getValue() != null ? var.getValue() : "null")
+                    );
                     
                     response.put("success", true);
                     response.put("status", "COMPLETED");
